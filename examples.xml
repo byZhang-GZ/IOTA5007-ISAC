@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<demos>
+  <demoitem>
+    <source>ISACUsing5GWaveformExample</source>
+    <type>live</type>
+    <extension>mlx</extension>
+    <metadata>ex27027452</metadata>
+    <thumbnail>html/ISACUsing5GWaveformExample_03.gif</thumbnail>
+    <sandboxPublished/>
+    <product>matlab</product>
+    <product>5g</product>
+    <product>phased</product>
+    <file component="pre6g_phased" timestamp="1737136979">HARQEntity.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperCFARResultsVisualizer.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperGenerateStaticScatterers.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperGet5GWaveformConfiguration.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperSimulateLinkSingleFrame.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperTheaterPlotter.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperVisualizeScatteringMIMOChannel.m</file>
+    <file component="pre6g_phased" timestamp="1738324353">helperVisualizeResourceGrid.m</file>
+  </demoitem>
+</demos>
