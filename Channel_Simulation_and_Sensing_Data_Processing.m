@@ -30,6 +30,14 @@ maxRange = 100;
 rangeGrid = -20:rangeResolution/2:maxRange; % 距离搜索网格rangeGrid
 numRange = numel(rangeGrid); % 计算rangeGrid中元素的总数，即距离网格的点数。
 
+% Ensure targets struct is available even if scenario script was not run in this session
+if ~exist('targets', 'var') || ~isstruct(targets) || ~isfield(targets, 'Trajectories')
+    trajectories = helperGetTargetTrajectories();
+    targets = struct();
+    targets.Trajectories = trajectories;
+    targets.ReflectionCoefficients = exp(1i*(2*pi*rand(1, numel(trajectories))));
+end
+
 % Baseline distance between Tx and Rx
 baseline = vecnorm(txPosition - rxPosition); % 计算发射机和接收机之间的直线距离（基线距离）
 
@@ -72,12 +80,17 @@ clusterer = clusterDBSCAN();
 
 tracker = helperConfigureTracker(txPosition, rxPosition, txOrientationAxes, rxOrientationAxes, rangeResolution, aoaResolution);
 % Preallocate space to store estimated target state vectors [x; vx; y; vy]
-% Preallocate space for 10 tracks
-targetStateEstimates = zeros(4, numSensingFrames, 10);
-trackIDs = [];
+maxNumTracks = 10;
+targetStateEstimates = nan(4, numSensingFrames, maxNumTracks);
+% 保存IMM模型概率 (2个模型: CV和CT)
+modelProbabilities = nan(2, numSensingFrames, maxNumTracks);
+trackIDList = nan(1, maxNumTracks);
+activeTrackCount = 0;
 
 % Produce visualizations
 generateVisualizations = true; %是否显示实时动画
+% generateVisualizations = false; %是否显示实时动画
+
 
 if generateVisualizations
     scenarioCFARResultsFigure = figure;
@@ -136,24 +149,58 @@ for i = 1:numSensingFrames
     x = permute(reshape(x, numRange, numRxAntennas, numAoD, numSymbolsPerFrame), [2 1 3 4]);
     x = rxsv'*reshape(x, numRxAntennas, []);
     % 矩阵 x 的行维度现在代表的是到达角（AoA）
-
-    % Average over AoDs and symbols
-    x = reshape(x, numAoA, numRange, []);
-    sumRangeAoAMap = sqrt(sum(abs(x).^2, 3)).';
-    % 生成最终的距离-角度图，也称为距离-角度热力图
-
+    
+    % 重塑为 [AoA, Range, AoD, Symbols] 以便进行多普勒处理
+    x_4D = reshape(x, numAoA, numRange, numAoD, numSymbolsPerFrame);
+    
+    % 在符号维度（慢时间）进行FFT以获取多普勒信息
+    x_R_A_D = fft(x_4D, [], 4);  % 第4维是符号维，FFT后变为多普勒维
+    x_R_A_D = fftshift(x_R_A_D, 4);  % 将零频移到中心
+    
+    % 生成距离-角度图（在AoD和多普勒上积分）
+    rangeAoAMap = sqrt(sum(abs(x_R_A_D).^2, [3 4])).';
+    
     % Perform 2-D CFAR detection over range-AoA map
-    cutResult = cfar2D(sumRangeAoAMap, cutidx); % sumRangeAoAMap 是待检测的图像，cutidx 是一个包含了所有待测单元坐标的索引列表
-    detectionIdxs = cutidx(:, cutResult); % 提取出被检测为目标的单元的索引。是一个2×N的矩阵，其中N是检测到的点的数量。每一列[range_index; angle_index]都是一个检测点的索引坐标
-    detectionValues = [rangeGrid(detectionIdxs(1,:)); aoaGrid(detectionIdxs(2,:))];% 将检测点的索引坐标转换为物理值    
-
-    % Cluster CFAR detections
+    cutResult = cfar2D(rangeAoAMap, cutidx); % rangeAoAMap 是待检测的图像
+    detectionIdxs = cutidx(:, cutResult); % 提取出被检测为目标的单元的索引
+    detectionValues = [rangeGrid(detectionIdxs(1,:)); aoaGrid(detectionIdxs(2,:))];
+    
+    % === 创新：为每个检测提取多普勒信息 ===
+    numDetections = size(detectionIdxs, 2);
+    dopplerValues = zeros(1, numDetections);
+    
+    % 多普勒网格（对应速度）
+    % 符号周期 = 符号长度（样本数）/ 采样率
+    symbolDuration = waveformInfo.SymbolLengths(1) / waveformInfo.SampleRate;
+    % 多普勒分辨率 = 1 / (符号周期 * 符号数)
+    dopplerResolution = 1 / (numSymbolsPerFrame * symbolDuration);
+    maxDoppler = dopplerResolution * numSymbolsPerFrame / 2;
+    dopplerGrid = linspace(-maxDoppler, maxDoppler, numSymbolsPerFrame);
+    velocityGrid = dopplerGrid * wavelength / 2;  % 转换为速度 (m/s)
+    
+    for d = 1:numDetections
+        rangeIdx = detectionIdxs(1, d);
+        aoaIdx = detectionIdxs(2, d);
+        
+        % 提取该检测点的多普勒切片（在AoD上求和）
+        dopplerSlice = squeeze(sqrt(sum(abs(x_R_A_D(aoaIdx, rangeIdx, :, :)).^2, 3)));
+        
+        % 找到峰值多普勒索引
+        [~, dopplerIdx] = max(dopplerSlice);
+        
+        % 转换为实际径向速度
+        dopplerValues(d) = velocityGrid(dopplerIdx);
+    end
+    
+    % 将多普勒信息添加到检测值中
+    detectionValues = [detectionValues; dopplerValues];  % 现在是 3 x N 矩阵
+    
+    % Cluster CFAR detections (使用3D检测值)
     [~, clusterids] = clusterer(detectionValues.'); % 对CFAR检测出的所有点进行聚类
     uniqClusterIds = unique(clusterids); % 找出 clusterids 中所有独一无二的簇ID
 
-
     m = numel(uniqClusterIds); %获取独立簇的数量
-    clusteredDetections = zeros(2, m);%2行m列的矩阵，用于存储每个簇的中心位置
+    clusteredDetections = zeros(3, m);  % 现在是3行（距离、角度、多普勒）
     %计算每个簇的中心位置
     for j = 1:m
         idxs = clusterids == uniqClusterIds(j);
@@ -165,13 +212,39 @@ for i = 1:numSensingFrames
     detections = helperFormatDetectionsForTracker(clusteredDetections, t(i), rangeResolution, aoaResolution);
     
     % Pass detections to the tracker
-    tracks = tracker(detections); % 执行跟踪步骤。这是整个循环中最高层的处理步骤之一
+    tracks = tracker(detections, t(i)); % GNN跟踪器需要时间戳
 
     % Store target state estimates
     for it = 1:numel(tracks)
         id = tracks(it).TrackID;
-        trackIDs = union(trackIDs, id);        
-        targetStateEstimates(:, i, id) = tracks(it).State;
+        idx = find(trackIDList(1:activeTrackCount) == id, 1);
+        if isempty(idx)
+            if activeTrackCount >= maxNumTracks
+                warning('Maximum number of track slots (%d) reached. Skipping track ID %d.', maxNumTracks, id);
+                continue;
+            end
+            activeTrackCount = activeTrackCount + 1;
+            trackIDList(activeTrackCount) = id;
+            idx = activeTrackCount;
+        end
+
+        % 从IMM滤波器提取状态（取前4维：x, vx, y, vy）
+        trackState = tracks(it).State;
+        targetStateEstimates(:, i, idx) = NaN;
+        if numel(trackState) >= 4
+            targetStateEstimates(1:4, i, idx) = trackState(1:4);
+        else
+            targetStateEstimates(1:numel(trackState), i, idx) = trackState;
+        end
+        
+        % 保存IMM模型概率（通过跟踪器查询）
+        modelProbabilities(:, i, idx) = NaN;
+        try
+            mp = getTrackFilterProperties(tracker, id, 'ModelProbabilities');
+            modelProbabilities(1:numel(mp), i, idx) = mp(:);
+        catch
+            modelProbabilities(:, i, idx) = NaN;
+        end
     end    
     
     % Visualization
@@ -184,7 +257,9 @@ for i = 1:numSensingFrames
         scenarioPlotter.plotTargetPositions(targetPositions);
        
         % Plot target positions estimated from the detections
-        measuredPositions = helperGetCartesianMeasurement(clusteredDetections, txPosition, rxPosition, rxOrientationAxes);
+        % 只使用前2维（距离和角度）进行笛卡尔转换
+        clusteredDetections2D = clusteredDetections(1:2, :);
+        measuredPositions = helperGetCartesianMeasurement(clusteredDetections2D, txPosition, rxPosition, rxOrientationAxes);
         scenarioPlotter.plotDetections(measuredPositions);
         scenarioPlotter.plotTracks(tracks);
     
@@ -193,10 +268,21 @@ for i = 1:numSensingFrames
         [trueRtx, trueAoD] = rangeangle(targetPositions.', txPosition, txOrientationAxes);
         trueBistaticRange = trueRrx + trueRtx - baseline;
     
-        cfarResultsVisualizer.plotCFARImage(aoaGrid, rangeGrid, sumRangeAoAMap);
+        cfarResultsVisualizer.plotCFARImage(aoaGrid, rangeGrid, rangeAoAMap);
         cfarResultsVisualizer.plotTruth([trueBistaticRange; trueAoA(1, :)]);
-        cfarResultsVisualizer.plotClusteredDetections(clusteredDetections);
+        cfarResultsVisualizer.plotClusteredDetections(clusteredDetections2D);
 
         sgtitle(scenarioCFARResultsFigure, sprintf('Frame %d, Simulation Time %.1f s', i, t(i)), 'FontSize' ,10);
     end
+% 将跟踪结果保存到结果目录，供后续性能评估脚本使用
+scriptDir = fileparts(mfilename('fullpath'));
+resultsDir = fullfile(scriptDir, 'results');
+if ~exist(resultsDir, 'dir')
+    mkdir(resultsDir);
+end
+resultFile = fullfile(resultsDir, 'trackingResults.mat');
+trackIDs = trackIDList(1:activeTrackCount);
+save(resultFile, 'targetStateEstimates', 'modelProbabilities', 't', 'trackIDs');
+fprintf('\nTracking results saved to %s\n', resultFile);
+
 end

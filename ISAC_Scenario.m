@@ -37,17 +37,15 @@ numScatterers = 40;                                        % Number of scatterer
     helperGenerateStaticScatterers(numScatterers, regionOfInterest);
 % 它在指定的区域内随机生成 numScatterers 个点的位置，并为每个点赋予一个随机的反射系数
 scatterers.Velocities = zeros(size(scatterers.Positions)); % 设置所有这些散射体的速度为零，确认它们是静态的
-
-
-
+targets = struct();
 targets.Trajectories = helperGetTargetTrajectories(); % 生成两个移动目标的运动轨迹
 numTargets = numel(targets.Trajectories);
 targets.ReflectionCoefficients = exp(1i*(2*pi*rand(1, numTargets)));
 % 每个目标随机生成一个复数形式的反射系数
 
-channel = phased.ScatteringMIMOChannel('CarrierFrequency', carrierFrequency, 'TransmitArray', txArray,...
-    'TransmitArrayPosition', txPosition, 'ReceiveArray', rxArray, 'ReceiveArrayPosition', rxPosition,...
-    "TransmitArrayOrientationAxes", txOrientationAxes, "ReceiveArrayOrientationAxes", rxOrientationAxes,... , 
+channel = phased.ScatteringMIMOChannel('CarrierFrequency', carrierFrequency, 'TransmitArray', txArray, ...
+    'TransmitArrayPosition', txPosition, 'ReceiveArray', rxArray, 'ReceiveArrayPosition', rxPosition, ...
+    'TransmitArrayOrientationAxes', txOrientationAxes, 'ReceiveArrayOrientationAxes', rxOrientationAxes, ...
     'SimulateDirectPath', true, 'ScattererSpecificationSource', 'Input Port', ...
     'ChannelResponseOutputPort',true,'Polarization','None');
 helperVisualizeScatteringMIMOChannel(channel, scatterers.Positions, targets.Trajectories);
