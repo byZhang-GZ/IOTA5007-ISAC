@@ -77,13 +77,19 @@ cutidx = [sumRangeIdxs(:).'; aoaIdxs(:).'];
 clusterer = clusterDBSCAN();
 % 聚类器对象。它将被用来将CFAR检测产生的密集检测点聚合成单个目标
 
+% Configure algorithm (default: UKF + JPDA for AIM-UKF-JPDA)
+algorithmConfig = struct();
+algorithmConfig.FilterType = 'UKF';
+algorithmConfig.MotionModels = {'CV', 'CT', 'CA'};
+algorithmConfig.TrackerType = 'JPDA';
 
-tracker = helperConfigureTracker(txPosition, rxPosition, txOrientationAxes, rxOrientationAxes, rangeResolution, aoaResolution);
-% Preallocate space to store estimated target state vectors [x; vx; y; vy]
+tracker = helperConfigureTracker(txPosition, rxPosition, txOrientationAxes, rxOrientationAxes, rangeResolution, aoaResolution, algorithmConfig);
+
+% Preallocate space to store estimated target state vectors
 maxNumTracks = 10;
-targetStateEstimates = nan(4, numSensingFrames, maxNumTracks);
-% 保存IMM模型概率 (2个模型: CV和CT)
-modelProbabilities = nan(2, numSensingFrames, maxNumTracks);
+targetStateEstimates = nan(6, numSensingFrames, maxNumTracks);  % CA model: 6-D state
+% 保存IMM模型概率 (3个模型: CV, CT, CA)
+modelProbabilities = nan(3, numSensingFrames, maxNumTracks);
 trackIDList = nan(1, maxNumTracks);
 activeTrackCount = 0;
 
@@ -228,20 +234,20 @@ for i = 1:numSensingFrames
             idx = activeTrackCount;
         end
 
-        % 从IMM滤波器提取状态（取前4维：x, vx, y, vy）
+        % Extract state from IMM filter (handle different state dimensions)
         trackState = tracks(it).State;
         targetStateEstimates(:, i, idx) = NaN;
-        if numel(trackState) >= 4
-            targetStateEstimates(1:4, i, idx) = trackState(1:4);
-        else
-            targetStateEstimates(1:numel(trackState), i, idx) = trackState;
-        end
         
-        % 保存IMM模型概率（通过跟踪器查询）
+        % Store available state components (up to 6-D for CA model)
+        numStatesToStore = min(numel(trackState), size(targetStateEstimates, 1));
+        targetStateEstimates(1:numStatesToStore, i, idx) = trackState(1:numStatesToStore);
+        
+        % Save IMM model probabilities
         modelProbabilities(:, i, idx) = NaN;
         try
             mp = getTrackFilterProperties(tracker, id, 'ModelProbabilities');
-            modelProbabilities(1:numel(mp), i, idx) = mp(:);
+            numModels = min(numel(mp), size(modelProbabilities, 1));
+            modelProbabilities(1:numModels, i, idx) = mp(1:numModels);
         catch
             modelProbabilities(:, i, idx) = NaN;
         end
