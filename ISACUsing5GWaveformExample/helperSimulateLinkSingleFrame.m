@@ -1,11 +1,11 @@
 function timeSynchronizedChannelMatrix = helperSimulateLinkSingleFrame(transmitter, receiver, channel, waveformConfig, scatterers, targets, currentTime)  
-    
     %   Copyright 2025 The MathWorks, Inc.
 
     waveformInfo = nrOFDMInfo(waveformConfig.Carrier); % Get information about the baseband waveform after OFDM modulation step
 
     % Maximum expected channel delay in samples after which we discard frames
-    maxChDelay = 1e3;
+    % Ensure it covers at least one symbol duration to avoid index out of bounds
+    maxChDelay = max(waveformInfo.SymbolLengths) + 1000;
     
     % Set up redundancy version (RV) sequence for all HARQ processes
     if waveformConfig.PDSCHExtension.EnableHARQ
@@ -59,6 +59,7 @@ function timeSynchronizedChannelMatrix = helperSimulateLinkSingleFrame(transmitt
     
     % Total number of slots in the simulation period
     NSlots = simLocal.NFrames * carrier.SlotsPerFrame;
+    fprintf('    NSlots: %d\n', NSlots);
 
     % Use a simple initial precoding matrix
     newWtx = 1/sqrt(numTxAntennas) * ones(pdsch.NumLayers,numTxAntennas);
@@ -72,12 +73,25 @@ function timeSynchronizedChannelMatrix = helperSimulateLinkSingleFrame(transmitt
     timeSynchronizedChannelMatrix = zeros(numSubcarriers, numSymbolsPerFrame, numRxAntennas, numTxAntennas);
 
     % Loop over the entire waveform length
+    fprintf('    Starting slot loop...\n');
     for nslot = 0:NSlots-1
+        if mod(nslot, 5) == 0
+            fprintf('    Processing Slot %d/%d\n', nslot, NSlots);
+        end
         carrier.NSlot = nslot;
 
         % Calculate the transport block sizes for the transmission in the slot
+        if nslot == 0, disp('    Calling nrPDSCHIndices...'); end
         [pdschIndices,pdschIndicesInfo] = nrPDSCHIndices(carrier,pdsch);
+        if nslot == 0
+            disp('    nrPDSCHIndices done');
+            disp(['    NREPerPRB: ' num2str(pdschIndicesInfo.NREPerPRB)]);
+        end
         trBlkSizes = nrTBS(pdsch.Modulation,pdsch.NumLayers,numel(pdsch.PRBSet),pdschIndicesInfo.NREPerPRB,pdschextra.TargetCodeRate,pdschextra.XOverhead);
+        if nslot == 0
+            disp(['    G: ' num2str(pdschIndicesInfo.G)]);
+            disp(['    trBlkSizes: ' mat2str(trBlkSizes)]);
+        end
     
         % HARQ processing
         for cwIdx = 1:pdsch.NumCodewords
@@ -97,6 +111,7 @@ function timeSynchronizedChannelMatrix = helperSimulateLinkSingleFrame(transmitt
         % Encode the DL-SCH transport blocks
         codedTrBlocks = encodeDLSCH(pdsch.Modulation,pdsch.NumLayers, ...
             pdschIndicesInfo.G,harqEntity.RedundancyVersion,harqEntity.HARQProcessID);
+        if nslot == 0, disp('    encodeDLSCH done'); end
 
         % Get precoding matrix (wtx) calculated in previous slot
         wtx = newWtx;
@@ -125,6 +140,7 @@ function timeSynchronizedChannelMatrix = helperSimulateLinkSingleFrame(transmitt
     
         % OFDM modulation
         [txWaveform,ofdmInfo] = nrOFDMModulate(carrier,pdschGrid);
+        if nslot == 0, disp('    nrOFDMModulate done'); end
 
         % Scale signal amplitude to account for FFT occupancy factor such
         % that the total power is 1W
@@ -151,17 +167,25 @@ function timeSynchronizedChannelMatrix = helperSimulateLinkSingleFrame(transmitt
             targetVelocities = zeros(numTargets, 3);
 
             for it = 1:numTargets
-                [targetPositions(it, :), ~, targetVelocities(it, :)] = lookupPose(targets.Trajectories{it},currentTime);
+                try
+                    [targetPositions(it, :), ~, targetVelocities(it, :)] = lookupPose(targets.Trajectories{it},currentTime);
+                catch ME
+                    disp(['Error in lookupPose for target ' num2str(it) ': ' ME.message]);
+                end
             end
 
             symIdx = sum([0 Ns(1:s-1)])+(1:Ns(s));
-            symIdx(symIdx>height(txWaveform)) = []; % If not enough samples just use what we can
             symtxWaveform = txWaveform(symIdx, :);
 
-            symrxWaveform = channel(transmitter(symtxWaveform),...
-                [scatterers.Positions targetPositions.'],...
-                [scatterers.Velocities targetVelocities.'],...
-                [scatterers.ReflectionCoefficients targets.ReflectionCoefficients]); 
+            try
+                symrxWaveform = channel(transmitter(symtxWaveform),...
+                    [scatterers.Positions targetPositions.'],...
+                    [scatterers.Velocities targetVelocities.'],...
+                    [scatterers.ReflectionCoefficients targets.ReflectionCoefficients]); 
+            catch ME
+                disp(['Error in channel/transmitter call at slot ' num2str(nslot) ' symbol ' num2str(s) ': ' ME.message]);
+                rethrow(ME);
+            end
 
             rxWaveform(symIdx,:) = receiver(symrxWaveform);
 

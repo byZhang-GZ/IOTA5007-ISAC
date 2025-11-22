@@ -1,607 +1,93 @@
-# AIM-UKF-JPDA: Adaptive Interacting Multiple-Model UKF with JPDA for ISAC# 基于交互式多模型(IMM)与多普勒融合的5G ISAC高机动目标跟踪
+# Integrated Sensing and Communication (ISAC) with AIM-UKF-JPDA Tracking
 
+## Overview
 
+This project implements a high-fidelity simulation framework for **Integrated Sensing and Communication (ISAC)** using 5G New Radio (NR) waveforms. It focuses on tracking **highly maneuvering targets** (e.g., vehicles making sharp turns or accelerating) by fusing range, angle, and Doppler measurements.
 
-**基于自适应多模型无迹卡尔曼滤波与联合概率数据关联的5G一体化感知通信(ISAC)目标跟踪系统**## 项目概述
+The core innovation is the **AIM-UKF-JPDA** algorithm:
+*   **AIM (Adaptive Interacting Multiple Model)**: Dynamically adjusts process noise based on maneuver detection.
+*   **UKF (Unscented Kalman Filter)**: Handles non-linear bistatic measurements better than EKF.
+*   **JPDA (Joint Probabilistic Data Association)**: Robustly associates measurements to tracks in cluttered environments.
 
+## Key Features
 
+*   **5G Waveform Generation**: Uses MATLAB's 5G Toolbox to generate realistic OFDM waveforms.
+*   **Physics-Based Channel**: Simulates multipath propagation and target scattering using the Phased Array System Toolbox.
+*   **3D Detection**: Extracts Range, Angle of Arrival (AoA), and Radial Velocity (Doppler) from the received signal.
+*   **Advanced Tracking**:
+    *   **IMM**: Switches between Constant Velocity (CV), Constant Turn (CT), and Constant Acceleration (CA) models.
+    *   **Doppler Fusion**: Directly uses radial velocity measurements to improve tracking accuracy.
+    *   **Adaptive Noise**: Increases process noise ($Q$) during maneuvers to prevent track loss.
 
----本项目是对基础5G ISAC（Integrated Sensing and Communication，通信感知一体化）系统的创新改进，专注于解决**高机动目标**（如转弯车辆）的精确跟踪问题。
+## Project Structure
 
+### Core Scripts
 
+*   **`run_ISAC_Simulation_Core.m`**: The main physics engine. It takes a configuration and scenario, runs the 5G simulation, processes the channel, performs CFAR detection, runs the tracker, and returns performance metrics (RMSE, track loss).
+*   **`AIM_UKF_JPDA_Experiment.m`**: The experiment runner. It conducts ablation studies (e.g., Baseline vs. Proposed) by running Monte Carlo simulations using the core engine.
+*   **`ISAC_Scenario.m`**: A standalone script for visualizing a single run with real-time plots of the scenario, detections, and tracks.
 
-## 📋 项目简介### 核心创新点
+### Configuration
 
+*   **`FiveG_Waveform_Config.m`**: Configures the 5G waveform parameters (carrier frequency, bandwidth, subcarrier spacing).
+*   **`Supporting_Functions/`**: Contains helper functions for tracking, plotting, and data processing.
+    *   `helperConfigureTracker.m`: Sets up the IMM-UKF-JPDA tracker.
+    *   `helperInitIMM.m`: Initializes the IMM filter structure.
+    *   `isacBistaticMeasurementFcn.m`: The non-linear measurement model.
 
+## Getting Started
 
-本项目在MATLAB官方5G ISAC示例的基础上,实现了创新的**AIM-UKF-JPDA**算法——一个集成了四项关键改进的高性能多目标跟踪系统:1. **交互式多模型(IMM)滤波器**：结合恒定速度(CV)和恒定转弯(CT)模型，自适应跟踪目标机动
+### Prerequisites
 
-2. **多普勒信息融合**：充分利用5G波形的FFT多普勒频移，直接测量目标径向速度
+*   MATLAB R2021b or later
+*   5G Toolbox
+*   Phased Array System Toolbox
+*   Sensor Fusion and Tracking Toolbox
+*   Communications Toolbox
 
-1. **UKF替代EKF** - 提升非线性处理能力3. **扩展卡尔曼滤波(EKF)**：处理双基地雷达的非线性测量模型
+### Running a Visualization Demo
 
-2. **增加CA运动模型** - 更好地描述加减速机动
-
-3. **自适应过程噪声** - 动态响应目标机动## 创新背景
-
-4. **JPDA数据关联** - 增强复杂场景鲁棒性
-
-### 基线系统的局限性
-
-### 核心创新点- **单一运动模型**：仅使用恒定速度(CV)模型，无法适应目标转弯
-
-- **间接速度估计**：通过位置变化推断速度，收敛慢且精度低
-
-| 创新点 | 技术方案 | 性能提升 |- **机动性能差**：目标转弯时跟踪误差急剧增大
-
-|--------|----------|----------|
-
-| **Innovation 1** | `trackingUKF` 替代 `trackingEKF` | 减少非线性测量模型的截断误差 |### 本项目的解决方案
-
-| **Innovation 2** | IMM中增加CA(恒定加速度)模型 | 准确跟踪加速/减速行为 |```
-
-| **Innovation 3** | 基于IMM概率的自适应过程噪声Q | 机动时快速收敛,平稳时稳定跟踪 |基线方案: CV模型 + [距离, 角度]测量
-
-| **Innovation 4** | `trackerJPDA` 替代 `trackerGNN` | 目标交叉/杂波环境下避免航迹交换 |         ↓
-
-创新方案: IMM(CV+CT)模型 + [距离, 角度, 径向速度]测量 + EKF
-
----```
-
-
-
-## 🚀 快速开始## 技术架构
-
-
-
-### 环境要求### 1. IMM滤波器架构
-
-
-
-- **MATLAB** R2021b 或更高版本```
-
-- **必需工具箱**:               ┌─────────────────────┐
-
-  - Communications Toolbox               │  检测输入(3D测量)  │
-
-  - Phased Array System Toolbox               │ [距离, 角度, 速度] │
-
-  - Sensor Fusion and Tracking Toolbox               └──────────┬──────────┘
-
-  - 5G Toolbox                          │
-
-          ┌───────────────┴───────────────┐
-
-### 安装步骤          │                               │
-
-    ┌─────▼─────┐                  ┌─────▼─────┐
-
-```bash    │ CV-EKF    │                  │ CT-EKF    │
-
-git clone https://github.com/byZhang-GZ/IOTA5007-ISAC.git    │ 4维状态   │                  │ 5维状态   │
-
-cd IOTA5007-ISAC    │[x,vx,y,vy]│                  │[x,vx,y,vy,ω]│
-
-```    └─────┬─────┘                  └─────┬─────┘
-
-          │                               │
-
-在MATLAB中打开项目文件夹,添加所有子文件夹到路径:          └───────────────┬───────────────┘
-
-```matlab                          │
-
-addpath(genpath(pwd));                  ┌───────▼────────┐
-
-```                  │  模型概率更新  │
-
-                  │   状态融合    │
-
-### 运行基础示例                  └───────┬────────┘
-
-                          │
-
-```matlab                    ┌─────▼──────┐
-
-% 方式1: 运行原始ISAC场景(使用默认UKF+JPDA配置)                    │ 最终输出   │
-
-ISAC_Scenario                    └────────────┘
-
-```
-
-% 方式2: 运行完整消融实验(五组算法对比)
-
-AIM_UKF_JPDA_Experiment### 2. 信号处理流程
-
-```
-
-```
-
----接收信号 → 静态杂波抑制 → 距离处理(FFT) → 角度处理(波束形成)
-
-                                    ↓
-
-## 📂 项目结构                            【创新】多普勒FFT
-
-                                    ↓
-
-```                    距离-角度-多普勒 3D检测
-
-IOTA5007-ISAC/                                    ↓
-
-├── ISAC_Scenario.m                          % 主仿真场景脚本                            CFAR检测 + 聚类
-
-├── AIM_UKF_JPDA_Experiment.m                % 完整消融实验框架                                    ↓
-
-├── Channel_Simulation_and_Sensing_Data_Processing.m                    3D测量: [R, θ, Ṙ]
-
-├── FiveG_Waveform_Config.m                                    ↓
-
-├── Supporting_Functions/                            IMM跟踪器
-
-│   ├── helperInitIMM.m                      % ★ IMM滤波器初始化(支持CV/CT/CA + UKF/EKF)```
-
-│   ├── helperConfigureTracker.m             % ★ 跟踪器配置(支持GNN/JPDA切换)
-
-│   ├── helperAdaptiveProcessNoise.m         % ★ 自适应过程噪声调整## 项目文件结构
-
-│   ├── helperProcessNoiseMatrices.m         % 过程噪声矩阵生成
-
-│   ├── helperGetTargetTrajectories.m        % ★ 多场景轨迹生成器```
-
-│   ├── isacBistaticMeasurementFcn.m         % ★ 双基地测量函数(支持CA状态)├── Channel_Simulation_and_Sensing_Data_Processing.m  # 主处理脚本（已修改）
-
-│   ├── isacBistaticMeasurementJacobianFcn.m % ★ 测量雅可比矩阵(支持CA)├── Performance_Evaluation.m                          # 性能评估脚本（新增）
-
-│   ├── helperFormatDetectionsForTracker.m├── Visualize_Model_Probabilities.m                   # 模型概率可视化（新增）
-
-│   └── ... (其他辅助函数)├── Supporting_Functions/
-
-├── ISACUsing5GWaveformExample/│   ├── helperGetTargetTrajectories.m                # 机动轨迹生成（已修改）
-
-│   └── ... (5G波形生成辅助函数)│   ├── helperConfigureTracker.m                     # IMM跟踪器配置（已修改）
-
-└── Experiment_Results/                      % 自动生成的实验结果目录│   ├── helperInitIMM.m                              # IMM初始化（新增）
-
-```│   ├── helperFormatDetectionsForTracker.m          # 3D检测格式化（已修改）
-
-│   ├── isacBistaticMeasurementFcn.m                # 非线性测量模型（新增）
-
-**★ 标记**:AIM-UKF-JPDA方案的核心修改/新增文件│   ├── isacBistaticMeasurementJacobianFcn.m        # 测量雅可比矩阵（新增）
-
-│   └── ...（其他辅助函数）
-
----└── README.md                                         # 本文档
-
-```
-
-## 🧪 实验设计
-
-## 快速开始
-
-### 五组对比算法
-
-### 环境要求
-
-| 算法编号 | 名称 | 配置 | 用途 |- MATLAB R2021b 或更高版本
-
-|---------|------|------|------|- Phased Array System Toolbox
-
-| **Baseline-CV** | 单模型基线 | CV-EKF + GNN | 性能下限参考 |- Sensor Fusion and Tracking Toolbox
-
-| **Baseline-IMM** | 原始IMM | IMM(CV/CT)-EKF + GNN | 主要对比基线 |- 5G Toolbox
-
-| **Proposed-A** | IMM3-UKF | IMM(CV/CT/CA)-UKF + GNN | 验证创新点1&2 |
-
-| **Proposed-B** | AIM-UKF | IMM(CV/CT/CA)-UKF + Adaptive-Q + GNN | 验证创新点3 |### 运行步骤
-
-| **Proposed-C** | **AIM-UKF-JPDA** | IMM(CV/CT/CA)-UKF + Adaptive-Q + JPDA | **完整方案** |
-
-#### 1. 运行主仿真
-
-### 三种测试场景```matlab
-
-% 在MATLAB命令窗口执行：
-
-#### 场景1: 高机动转弯 (HighManeuver)run('Channel_Simulation_and_Sensing_Data_Processing.m')
-
-- **目的**: 测试UKF vs EKF,以及CV/CT/CA模型性能```
-
-- **轨迹**: 两个目标执行高速转弯
-
-- **关键时刻**: t=2.5s转弯阶段**预期输出**：
-
-- 实时动画显示目标运动、检测和跟踪
-
-#### 场景2: 加速/减速 (Acceleration)- 左图：场景俯视图（真实轨迹、检测点、跟踪航迹）
-
-- **目的**: 专门测试CA模型和自适应Q的响应速度- 右图：距离-角度CFAR检测结果
-
-- **轨迹**: 一个目标执行"起步→加速→匀速→刹车"
-
-- **关键时刻**: t=0-3s加速,t=5-8s减速#### 2. 性能评估
+To see the system in action with real-time plots:
 
 ```matlab
-
-#### 场景3: 目标交叉+强杂波 (Crossing)% 运行评估脚本：
-
-- **目的**: 测试JPDA vs GNN的鲁棒性run('Performance_Evaluation.m')
-
-- **轨迹**: 两个目标近距离交叉```
-
-- **杂波设置**: PFA=1e-2(增强杂波)
-
-**输出包括**：
-
-### 评价指标- 位置RMSE vs 时间曲线
-
-- 速度RMSE vs 时间曲线
-
-```matlab- 轨迹对比图（真实 vs 估计）
-
-% 位置RMSE (m)- 统计指标（平均/最大误差）
-
-posRMSE = sqrt((x_est - x_true)^2 + (y_est - y_true)^2);
-
-#### 3. 模型概率可视化
-
-% 速度RMSE (m/s)```matlab
-
-velRMSE = sqrt((vx_est - vx_true)^2 + (vy_est - vy_true)^2);% 查看IMM自适应性：
-
-run('Visualize_Model_Probabilities.m')
-
-% 航迹质量指标```
-
-- 航迹丢失次数: Track Losses
-
-- 航迹交换次数: Track Swaps (场景3)**显示**：
-
-- 平均处理时间: Avg Processing Time (ms)- CV模型概率（直线段应为1）
-
-```- CT模型概率（转弯段应上升）
-
-- 机动区域标注
-
----
-
-## 核心算法详解
-
-## 📊 预期结果
-
-### 1. 多普勒提取
-
-### 图1: RMSE对比(场景1-转弯)
-
-在基线系统的距离-角度处理后，增加多普勒维处理：
-
-在高速转弯阶段(t≥2.5s):
-
-- **Proposed-C** RMSE显著低于Baseline```matlab
-
-- **Baseline-CV** 完全失效(无法跟随转弯)% 符号维FFT获取多普勒
-
-- UKF优于EKF约20-30%x_R_A_D = fft(x_4D, [], 4);  % 第4维: 符号 → 多普勒
-
-x_R_A_D = fftshift(x_R_A_D, 4);
-
-### 图2: 模型概率验证(场景2-加速)
-
-% 为每个检测点提取峰值多普勒
-
-清晰展示自适应模型切换:for each detection (range_idx, aoa_idx):
-
-- **加速阶段**: P(CA)上升至主导    dopplerSlice = squeeze(sum(abs(x_R_A_D(aoa_idx, range_idx, :, :)).^2, 3));
-
-- **转弯阶段**: P(CT)上升    [~, doppler_idx] = max(dopplerSlice);
-
-- **匀速阶段**: P(CV)占主导    velocity = dopplerGrid(doppler_idx) * wavelength / 2;
-
-end
-
-### 图3: 消融研究(所有场景)```
-
-
-
-**性能排名(RMSE由高到低)**:### 2. 非线性测量模型
-
+% Run the scenario visualization
+ISAC_Scenario
 ```
 
-Baseline-CV > Baseline-IMM > Proposed-A > Proposed-B > Proposed-C双基地雷达测量方程：
+### Running Experiments
 
-```
-
-证明每个创新点都带来性能提升$$
-
-z = \begin{bmatrix} 
-
-### 表1: 蒙特卡洛综合性能(N=50)R_{bistatic} \\\ 
-
-\theta_{AoA} \\\ 
-
-| 算法 | 场景1 位置RMSE | 场景2 位置RMSE | 场景3 航迹交换 | 平均耗时 |\dot{R}_{bistatic} 
-
-|------|----------------|----------------|----------------|----------|\end{bmatrix} = h(x)
-
-| Baseline-CV | 8.5±1.2 | 7.8±1.0 | 18 | 8.2ms |$$
-
-| Baseline-IMM | 3.2±0.5 | 3.5±0.6 | 12 | 12.5ms |
-
-| Proposed-A | 2.1±0.3 | 2.3±0.4 | 10 | 18.3ms |其中：
-
-| Proposed-B | 1.8±0.2 | 1.9±0.3 | 9 | 19.1ms |- $R_{bistatic} = ||\mathbf{r}_{target} - \mathbf{r}_{tx}|| + ||\mathbf{r}_{target} - \mathbf{r}_{rx}|| - baseline$
-
-| **Proposed-C** | **1.5±0.2** | **1.6±0.2** | **3** | 25.7ms |- $\theta_{AoA} = \arctan2(y - y_{rx}, x - x_{rx})$ （在接收机局部坐标系）
-
-- $\dot{R}_{bistatic} = v_{r,tx} + v_{r,rx}$ （径向速度和）
-
----
-
-### 3. EKF线性化
-
-## 🔧 自定义配置
-
-通过雅可比矩阵局部线性化：
-
-### 配置算法参数
-
-$$
-
-```matlabH = \frac{\partial h}{\partial x} \bigg|_{x = \hat{x}}
-
-% 创建自定义algorithmConfig$$
-
-config = struct();
-
-config.FilterType = 'UKF';                    % 'UKF' 或 'EKF'其中 $H$ 是 $3 \times n$ 矩阵（$n=4$ for CV, $n=5$ for CT）
-
-config.MotionModels = {'CV', 'CT', 'CA'};     % 运动模型组合
-
-config.TrackerType = 'JPDA';                  % 'JPDA' 或 'GNN'### 4. CT模型状态转移
-
-config.NoiseIntensity = struct('CV', 5, 'CA', 1, 'CTTurnRate', deg2rad(5));
-
-恒定转弯率模型：
-
-% 自适应过程噪声配置
-
-adaptiveConfig = struct();$$
-
-adaptiveConfig.Enable = true;\begin{bmatrix} 
-
-adaptiveConfig.ManeuverThreshold = 0.5;       % 机动检测阈值x_{k+1} \\\ 
-
-adaptiveConfig.QBoostFactor = 10;             % Q增益倍数v_{x,k+1} \\\ 
-
-adaptiveConfig.BoostDuration = 3;             % 持续帧数y_{k+1} \\\ 
-
-v_{y,k+1} \\\ 
-
-% 在主脚本中使用\omega_{k+1} 
-
-tracker = helperConfigureTracker(txPos, rxPos, txOrient, rxOrient, ...\end{bmatrix} = 
-
-    rangeRes, aoaRes, config);\begin{bmatrix} 
-
-```x_k + \frac{v_x \sin(\omega \Delta t) + v_y (\cos(\omega \Delta t)-1)}{\omega} \\\ 
-
-v_x \cos(\omega \Delta t) - v_y \sin(\omega \Delta t) \\\ 
-
-### 切换测试场景y_k + \frac{v_x (1-\cos(\omega \Delta t)) + v_y \sin(\omega \Delta t)}{\omega} \\\ 
-
-v_x \sin(\omega \Delta t) + v_y \cos(\omega \Delta t) \\\ 
-
-```matlab\omega_k 
-
-% 在 ISAC_Scenario.m 或 AIM_UKF_JPDA_Experiment.m 中:\end{bmatrix}
-
-trajectories = helperGetTargetTrajectories('HighManeuver');  % 或 'Acceleration', 'Crossing'$$
-
-```
-
-### 5. IMM融合
-
----
-
-状态融合：
-
-## 📖 技术细节$$
-
-\hat{x} = \sum_{i=1}^{2} \mu_i \hat{x}_i
-
-### IMM滤波器架构$$
-
-
-
-```模型概率更新：
-
-trackingIMM$$
-
-├── CV Filter (trackingUKF)\mu_i(k) \propto \Lambda_i(k) \sum_{j=1}^{2} p_{ji} \mu_j(k-1)
-
-│   └── State: [x; vx; y; vy]  (4-D)$$
-
-├── CT Filter (trackingUKF)
-
-│   └── State: [x; vx; y; vy; omega]  (5-D)其中 $\Lambda_i$ 是模型 $i$ 的似然函数。
-
-└── CA Filter (trackingUKF)
-
-    └── State: [x; vx; ax; y; vy; ay]  (6-D)## 预期性能改进
-
-```
-
-| 指标 | 基线(CV) | 创新(IMM+Doppler) | 改进 |
-
-**模型转移概率矩阵** (3x3):|------|----------|-------------------|------|
-
-```| 速度收敛时间 | 2-3帧 | <1帧 | **70%↓** |
-
-     CV    CT    CA| 直线段位置RMSE | ~2m | ~1.5m | 25%↓ |
-
-CV [ 0.9   0.05  0.05 ]| **转弯段位置RMSE** | ~8-12m | **~2-3m** | **75%↓** |
-
-CT [ 0.05  0.9   0.05 ]| 速度估计RMSE | ~3 m/s | ~0.8 m/s | **73%↓** |
-
-CA [ 0.05  0.05  0.9  ]
-
-```## 关键参数配置
-
-
-
-### 双基地雷达测量模型### IMM转移概率矩阵
+To run the full ablation study and generate performance metrics:
 
 ```matlab
-
-测量向量: `z = [bistaticRange; AoA; bistaticRangeRate]`transitionProb = [0.95 0.05;   % CV保持概率高
-
-                  0.05 0.95];  % CT保持概率高
-
-```matlab```
-
-% 非线性测量函数- 对角元素高（0.95）：减少频繁切换
-
-function z = isacBistaticMeasurementFcn(state, txPos, rxPos, rxOrient)- 非对角元素低（0.05）：允许必要时切换
-
-    % 支持CV(4-D), CT(5-D), CA(6-D)状态
-
-    bistaticRange = rangeTx + rangeRx - baseline;### 过程噪声调优
-
-    AoA = atan2(yl, xl) * 180/pi;  % 度```matlab
-
-    bistaticRangeRate = v_tx + v_rx;q_cv = 5;     % CV模型：位置过程噪声
-
-endq_ct = 0.1;   % CT模型：角速度过程噪声
-
-``````
-
-
-
----### 测量噪声
-
-```matlab
-
-## 🎯 未来改进方向R = diag([
-
-    (rangeResolution/4)^2;   % 距离
-
-1. **深度学习融合**: 使用LSTM预测机动意图,自适应调整IMM转移概率    (aoaResolution/12)^2;    # 角度
-
-2. **分布式JPDA**: 扩展到多传感器多目标跟踪    0.5^2                    % 径向速度 (m/s)
-
-3. **实时优化**: GPU加速UKF计算]);
-
-4. **鲁棒性增强**: 增加遮挡检测和航迹管理逻辑```
-
-
-
----## 故障排除
-
-
-
-## 📚 参考文献### 问题1: "未定义函数或变量 'trackingIMM'"
-
-**解决**：安装 Sensor Fusion and Tracking Toolbox
-
-1. MathWorks, "Integrated Sensing and Communication Using 5G Waveform", 2023```matlab
-
-2. S. Julier and J. Uhlmann, "Unscented Filtering and Nonlinear Estimation", 2004% 检查工具箱：
-
-3. T. E. Fortmann et al., "Sonar Tracking of Multiple Targets Using Joint Probabilistic Data Association", 1983ver
-
-4. Y. Bar-Shalom et al., "Estimation with Applications to Tracking and Navigation", 2001```
-
-
-
----### 问题2: 跟踪初始化失败
-
-**原因**：检测信噪比过低或CFAR阈值过高
-
-## 📧 联系方式
-
-**解决**：
-
-- **作者**: byZhang-GZ```matlab
-
-- **项目**: IOTA5007 Course Project% 降低虚警率：
-
-- **仓库**: [https://github.com/byZhang-GZ/IOTA5007-ISAC](https://github.com/byZhang-GZ/IOTA5007-ISAC)cfar2D.ProbabilityFalseAlarm = 1e-2;  % 从1e-3改为1e-2
-
+% Run the experiment loop
+AIM_UKF_JPDA_Experiment
 ```
 
----
+This will compare different algorithms (e.g., Baseline CV-EKF vs. Proposed AIM-UKF-JPDA) across multiple scenarios (High Maneuver, Acceleration, Crossing).
 
-### 问题3: 模型概率全为NaN
+## Algorithm Details
 
-## 📄 许可证**原因**：滤波器发散或雅可比矩阵奇异
+### Tracking Architecture
 
+The system uses an **Interacting Multiple Model (IMM)** filter with three sub-models:
+1.  **Constant Velocity (CV)**: For non-maneuvering phases.
+2.  **Constant Turn (CT)**: For turning maneuvers.
+3.  **Constant Acceleration (CA)**: For longitudinal maneuvers.
 
+### Adaptive Process Noise (AIM)
 
-本项目基于MATLAB官方示例代码进行学术研究改进,遵循教育和研究用途的使用协议。**检查**：
+The **AIM** module monitors the likelihood of the maneuver models (CT and CA). If the probability of a maneuver model exceeds a threshold, the process noise covariance ($Q$) is temporarily boosted to allow the filter to adapt quickly to the change in motion.
 
-1. 测量噪声协方差是否正定
+### Measurement Model
 
----2. 初始协方差是否过小
+The tracker uses a **bistatic measurement model**:
+$$ z = [R_{bistatic}, \theta_{AoA}, \dot{R}_{bistatic}]^T $$
+Where:
+*   $R_{bistatic}$ is the bistatic range (Tx -> Target -> Rx).
+*   $\theta_{AoA}$ is the Angle of Arrival at the receiver.
+*   $\dot{R}_{bistatic}$ is the bistatic range rate (Doppler), derived from the relative velocities.
 
-3. 除零保护是否充分
+## License
 
-**最后更新**: 2025-11-01  
+This project is for academic research and educational purposes.
 
-**版本**: v1.0 - AIM-UKF-JPDA完整实现### 问题4: 速度估计不准确
-
-**调试**：
-```matlab
-% 验证多普勒网格：
-fprintf('多普勒分辨率: %.3f Hz\n', dopplerResolution);
-fprintf('最大速度: %.2f m/s\n', maxDoppler * wavelength / 2);
-```
-
-## 进一步改进方向
-
-### 1. UKF替代EKF
-- 优点：更高的非线性逼近精度
-- 实现：替换 `trackingEKF` 为 `trackingUKF`
-
-### 2. 增加CA模型
-```matlab
-% IMM扩展为3个模型：
-filters = {cvFilter, ctFilter, caFilter};  % CA: Constant Acceleration
-```
-
-### 3. 自适应过程噪声
-根据模型概率动态调整 $Q$ 矩阵。
-
-### 4. 多帧关联
-实现Track-Before-Detect (TBD)算法。
-
-## 性能基准测试
-
-在标准测试场景下（2目标，10帧，机动时间占50%）：
-
-- **运行时间**：约15-20秒（Intel i7, 16GB RAM）
-- **内存占用**：约500MB
-- **实时因子**：约0.04（40ms计算时间 / 400ms帧间隔）
-
-## 引用与参考
-
-1. Bar-Shalom, Y., et al. (2001). *Estimation with Applications to Tracking and Navigation*. Wiley.
-2. Blackman, S., & Popoli, R. (1999). *Design and Analysis of Modern Tracking Systems*. Artech House.
-3. MathWorks Documentation: [trackingIMM](https://www.mathworks.com/help/fusion/ref/trackingimm.html)
-4. 3GPP TR 38.901: Study on channel model for frequencies from 0.5 to 100 GHz
-
-## 致谢
-
-本项目基于MathWorks的5G ISAC示例进行创新改进，感谢原始示例的作者。
-
-## 许可
-
-本项目仅供学术研究使用。
-
-## 联系方式
-
-如有问题或建议，请通过GitHub Issues反馈。
-
----
-
-**最后更新**: 2025年10月30日  
-**版本**: v1.0  
-**状态**: ✅ 测试通过

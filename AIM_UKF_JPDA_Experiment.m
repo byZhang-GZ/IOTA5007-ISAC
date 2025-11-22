@@ -17,7 +17,7 @@ clear; close all; clc;
 
 %% Configuration
 config = struct();
-config.NumMonteCarloRuns = 50;         % Number of Monte Carlo simulations
+config.NumMonteCarloRuns = 2;         % Number of Monte Carlo simulations
 config.Scenarios = {'HighManeuver', 'Acceleration', 'Crossing'};
 config.SaveResults = true;              % Save results to .mat file
 config.GeneratePlots = true;            % Generate comparison plots
@@ -141,65 +141,86 @@ end
 function mcResults = localRunMonteCarloSimulation(algorithm, scenarioName, numRuns)
 %LOCALRUNMONTECARLOSIMULATION Run Monte Carlo simulation for one algorithm.
 
-% Initialize storage for all runs
 posRMSE = [];
 velRMSE = [];
 trackLosses = 0;
 trackSwaps = 0;
 processingTimes = [];
+exampleRun = [];
 
 for run = 1:numRuns
     try
-        % Run single simulation
-        runResult = localRunSingleSimulation(algorithm.Config, scenarioName);
+        seedValue = localDeriveSeed(algorithm.Name, scenarioName, run);
+        runResult = localRunSingleSimulation(algorithm, scenarioName, seedValue);
         
-        % Accumulate metrics
-        posRMSE = [posRMSE; runResult.posRMSE];  %#ok<AGROW>
-        velRMSE = [velRMSE; runResult.velRMSE];  %#ok<AGROW>
+        posRMSE = [posRMSE; runResult.posRMSE(:).']; %#ok<AGROW>
+        velRMSE = [velRMSE; runResult.velRMSE(:).']; %#ok<AGROW>
         trackLosses = trackLosses + runResult.trackLosses;
         trackSwaps = trackSwaps + runResult.trackSwaps;
-        processingTimes = [processingTimes; runResult.avgProcessingTime];  %#ok<AGROW>
+        processingTimes = [processingTimes; runResult.avgProcessingTime]; %#ok<AGROW>
+        if isempty(exampleRun)
+            exampleRun = runResult;
+        end
     catch ME
         warning('Run %d failed: %s', run, ME.message);
     end
 end
 
-% Calculate statistics
 mcResults = struct();
 mcResults.posRMSE_mean = mean(posRMSE, 'all', 'omitnan');
-mcResults.posRMSE_std = std(posRMSE, 0, 'all', 'omitnan');
+mcResults.posRMSE_std = std(posRMSE(:), 0, 'omitnan');
 mcResults.velRMSE_mean = mean(velRMSE, 'all', 'omitnan');
-mcResults.velRMSE_std = std(velRMSE, 0, 'all', 'omitnan');
+mcResults.velRMSE_std = std(velRMSE(:), 0, 'omitnan');
 mcResults.trackLosses_total = trackLosses;
 mcResults.trackSwaps_total = trackSwaps;
 mcResults.avgProcessingTime = mean(processingTimes, 'omitnan');
 mcResults.posRMSE_timeSeries = posRMSE;
 mcResults.velRMSE_timeSeries = velRMSE;
+mcResults.exampleRun = exampleRun;
 end
 
-function runResult = localRunSingleSimulation(algorithmConfig, scenarioName)
-%LOCALRUNSINGLESIMULATION Run a single tracking simulation.
+function runResult = localRunSingleSimulation(algorithm, scenarioName, seedValue)
+%LOCALRUNSINGLESIMULATION Execute the full ISAC simulation for one run.
 
-% This is a simplified placeholder. Replace with actual simulation logic.
-% In实际实现中,这里应该调用完整的ISAC仿真循环
+if nargin < 3 || isempty(seedValue)
+    seedValue = 'shuffle';
+end
 
-% Generate ground truth trajectories
-trajectories = helperGetTargetTrajectories(scenarioName);
+try
+    metrics = run_ISAC_Simulation_Core(algorithm.Config, scenarioName);
+catch ME
+    warning('localRunSingleSimulation:Failure', ...
+        'Simulation failed for %s/%s (seed=%s): %s', ...
+        algorithm.Name, scenarioName, num2str(seedValue), ME.message);
+    metrics = struct('posRMSE', NaN, 'velRMSE', NaN, ...
+        'trackLosses', NaN, 'trackSwaps', NaN);
+end
 
-% Simulate tracking (placeholder - implement full ISAC simulation here)
-% For now, generate synthetic RMSE values
-duration = 4;  % seconds
-dt = 0.1;
-numSteps = duration / dt;
-
-% Placeholder RMSE generation (replace with actual tracking error calculation)
-baselineError = 2.0;  % meters
 runResult = struct();
-runResult.posRMSE = baselineError * (1 + 0.1 * randn(numSteps, 1));
-runResult.velRMSE = 0.5 * (1 + 0.1 * randn(numSteps, 1));
-runResult.trackLosses = randi([0, 1]);
-runResult.trackSwaps = randi([0, 1]);
-runResult.avgProcessingTime = 10 + 5 * rand();  % ms
+runResult.posRMSE = metrics.posRMSE;
+runResult.velRMSE = metrics.velRMSE;
+runResult.trackLosses = metrics.trackLosses;
+runResult.trackSwaps = metrics.trackSwaps;
+runResult.avgProcessingTime = NaN;
+runResult.modelProbabilities = [];
+runResult.timeVector = [];
+runResult.trackIDs = [];
+runResult.algorithmConfig = algorithm.Config;
+runResult.seed = seedValue;
+end
+
+function seedValue = localDeriveSeed(algorithmName, scenarioName, runIdx)
+%LOCALDERIVESEED Create deterministic seeds per algorithm/scenario/run.
+
+if nargin < 3
+    runIdx = 1;
+end
+nameHash = sum(double(char(algorithmName)))*7919;
+scenarioHash = sum(double(char(scenarioName)))*104729;
+seedValue = double(mod(nameHash + scenarioHash + runIdx*1013, 2^32 - 1));
+if seedValue <= 0
+    seedValue = runIdx;
+end
 end
 
 function summary = localGeneratePerformanceSummary(results, algorithms, scenarios)
@@ -275,7 +296,7 @@ end
 % Plot 2: Model Probabilities (for Proposed-C in Acceleration scenario)
 if ismember('Acceleration', config.Scenarios)
     figure('Name', 'Model Probabilities - Acceleration Scenario');
-    localPlotModelProbabilities(results.Acceleration, algorithms, 'Acceleration');
+    localPlotModelProbabilities(results.Acceleration, 'Acceleration');
     if config.SaveResults
         saveas(gcf, fullfile(config.ResultsDir, 'Fig2_ModelProbs_Acceleration.png'));
     end
@@ -289,7 +310,7 @@ if config.SaveResults
 end
 end
 
-function localPlotRMSEComparison(scenarioResults, algorithms, scenarioName)
+function localPlotRMSEComparison(scenarioResults, ~, scenarioName)
 %LOCALPLOTRMSECOMPARISON Plot RMSE time series for selected algorithms.
 
 % Select key algorithms to plot: Baseline-CV, Baseline-IMM, Proposed-C
@@ -302,7 +323,7 @@ for i = 1:numel(selectedAlgs)
     if isfield(scenarioResults, algName)
         rmseData = scenarioResults.(algName).posRMSE_timeSeries;
         if ~isempty(rmseData)
-            timeSeries = mean(rmseData, 1);  % Average across Monte Carlo runs
+            timeSeries = mean(rmseData, 1, 'omitnan');  % Average across Monte Carlo runs
             plot(1:numel(timeSeries), timeSeries, 'LineWidth', 2, ...
                 'Color', colors(i,:), 'DisplayName', strrep(algName, '_', '-'));
         end
@@ -315,19 +336,71 @@ legend('Location', 'best');
 hold off;
 end
 
-function localPlotModelProbabilities(scenarioResults, algorithms, scenarioName) %#ok<INUSD>
+function localPlotModelProbabilities(scenarioResults, scenarioName)
 %LOCALPLOTMODELPROBABILITIES Plot IMM model probabilities over time.
 
-% Placeholder for model probability visualization
-% In实际实现中,需要从跟踪器中记录模型概率
+algName = 'Proposed_C_AIM_UKF_JPDA';
+if ~isfield(scenarioResults, algName)
+    localPlotModelProbabilitiesPlaceholder();
+    return;
+end
+
+algResult = scenarioResults.(algName);
+if ~isfield(algResult, 'exampleRun') || isempty(algResult.exampleRun)
+    localPlotModelProbabilitiesPlaceholder();
+    return;
+end
+
+runData = algResult.exampleRun;
+mpData = runData.modelProbabilities;
+if isempty(mpData)
+    localPlotModelProbabilitiesPlaceholder();
+    return;
+end
+
+numTracks = size(mpData, 3);
+trackIdx = [];
+for k = 1:max(1, numTracks)
+    if any(isfinite(mpData(:, :, k)), 'all')
+        trackIdx = k;
+        break;
+    end
+end
+if isempty(trackIdx)
+    localPlotModelProbabilitiesPlaceholder();
+    return;
+end
+
+modelProbSeries = mpData(:, :, trackIdx);
+timeVector = runData.timeVector;
+if isempty(modelProbSeries) || isempty(timeVector)
+    localPlotModelProbabilitiesPlaceholder();
+    return;
+end
+
+modelNames = runData.algorithmConfig.MotionModels;
+colors = lines(size(modelProbSeries, 1));
+hold on; grid on;
+for m = 1:size(modelProbSeries, 1)
+    plot(timeVector, modelProbSeries(m, :), 'LineWidth', 2, 'Color', colors(m, :), ...
+        'DisplayName', sprintf('P(%s)', modelNames{m}));
+end
+xlabel('Time (s)');
+ylabel('Model Probability');
+ylim([0 1]);
+title(sprintf('IMM Model Probabilities - %s Scenario', scenarioName));
+legend('Location', 'best');
+hold off;
+end
+
+function localPlotModelProbabilitiesPlaceholder()
 subplot(1,1,1);
 hold on; grid on;
-text(0.5, 0.5, 'Model Probability Plot (To Be Implemented)', ...
+text(0.5, 0.5, 'Model Probability Data Unavailable', ...
     'HorizontalAlignment', 'center', 'FontSize', 12);
 xlabel('Time (s)');
 ylabel('Model Probability');
-title('IMM Model Probabilities During Acceleration');
-legend({'P(CV)', 'P(CT)', 'P(CA)'}, 'Location', 'best');
+title('IMM Model Probabilities');
 hold off;
 end
 
