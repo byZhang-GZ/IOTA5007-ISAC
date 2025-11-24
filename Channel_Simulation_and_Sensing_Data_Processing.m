@@ -1,3 +1,20 @@
+%% ========== Channel Simulation and Sensing Data Processing ==========
+% 此脚本需要先运行配置脚本: ISAC_Scenario.m 和 FiveG_Waveform_Config.m
+% 如果变量不存在，将自动运行这些脚本
+
+% 添加必要的路径
+addpath('ISACUsing5GWaveformExample');
+addpath('Supporting_Functions');
+
+% 检查必需的变量是否存在
+if ~exist('numRxAntennas', 'var') || ~exist('waveformConfig', 'var')
+    fprintf('检测到缺少配置变量，正在运行配置脚本...\n');
+    run('ISAC_Scenario.m');
+    fprintf('✓ ISAC场景配置完成\n');
+    run('FiveG_Waveform_Config.m');
+    fprintf('✓ 5G波形配置完成\n\n');
+end
+
 %  总共仿真10个PDSCH帧
 numSensingFrames = 10;
 
@@ -77,21 +94,33 @@ cutidx = [sumRangeIdxs(:).'; aoaIdxs(:).'];
 clusterer = clusterDBSCAN();
 % 聚类器对象。它将被用来将CFAR检测产生的密集检测点聚合成单个目标
 
-% Configure algorithm (default: UKF + JPDA for AIM-UKF-JPDA)
-algorithmConfig = struct();
-algorithmConfig.FilterType = 'UKF';
-algorithmConfig.MotionModels = {'CV', 'CT', 'CA'};
-algorithmConfig.TrackerType = 'JPDA';
 
-tracker = helperConfigureTracker(txPosition, rxPosition, txOrientationAxes, rxOrientationAxes, rangeResolution, aoaResolution, algorithmConfig);
-
-% Preallocate space to store estimated target state vectors
+tracker = helperConfigureTracker(txPosition, rxPosition, txOrientationAxes, rxOrientationAxes, rangeResolution, aoaResolution);
+% Preallocate space to store estimated target state vectors [x; vx; y; vy]
 maxNumTracks = 10;
-targetStateEstimates = nan(6, numSensingFrames, maxNumTracks);  % CA model: 6-D state
-% 保存IMM模型概率 (3个模型: CV, CT, CA)
+targetStateEstimates = nan(4, numSensingFrames, maxNumTracks);
+% 保存IMM模型概率 (3个模型: CV、CT和CA)
 modelProbabilities = nan(3, numSensingFrames, maxNumTracks);
 trackIDList = nan(1, maxNumTracks);
 activeTrackCount = 0;
+
+% === 自适应过程噪声参数 ===
+% 为每个航迹维护自适应状态
+adaptiveNoiseParams = struct();
+adaptiveNoiseParams.maneuverThreshold = 0.4;      % 机动检测阈值（CT+CA概率之和）
+adaptiveNoiseParams.boostFactor = 5.0;            % Q矩阵增强系数
+adaptiveNoiseParams.smoothingAlpha = 0.3;         % EWMA平滑系数（0-1，越小越平滑）
+adaptiveNoiseParams.cooldownFrames = 3;           % 冷却帧数，避免频繁切换
+adaptiveNoiseParams.minBoostDuration = 2;         % 最小增强持续帧数
+
+% 为每个航迹存储自适应状态
+for iTrack = 1:maxNumTracks
+    adaptiveNoiseParams.trackStates(iTrack).isManeuver = false;       % 当前是否处于机动状态
+    adaptiveNoiseParams.trackStates(iTrack).maneuverProb = 0;         % 平滑后的机动概率
+    adaptiveNoiseParams.trackStates(iTrack).cooldownCounter = 0;      % 冷却计数器
+    adaptiveNoiseParams.trackStates(iTrack).boostCounter = 0;         % 增强持续计数器
+    adaptiveNoiseParams.trackStates(iTrack).currentBoostFactor = 1.0; % 当前实际的增强系数（平滑过渡）
+end
 
 % Produce visualizations
 generateVisualizations = true; %是否显示实时动画
@@ -217,6 +246,106 @@ for i = 1:numSensingFrames
     % Format detections so that they can be processed by the tracker
     detections = helperFormatDetectionsForTracker(clusteredDetections, t(i), rangeResolution, aoaResolution);
     
+    % === 自适应过程噪声调整 ===
+    % 在调用tracker之前，根据上一帧的模型概率调整过程噪声
+    if i > 1  % 从第二帧开始才有历史数据
+        for iTrack = 1:activeTrackCount
+            trackID = trackIDList(iTrack);
+            
+            % 获取上一帧的模型概率
+            prevModelProb = modelProbabilities(:, i-1, iTrack);
+            
+            % 检查是否有有效的概率数据
+            if ~any(isnan(prevModelProb))
+                % 计算机动模型（CT + CA）的概率之和
+                maneuverProbRaw = prevModelProb(2) + prevModelProb(3);  % CT概率 + CA概率
+                
+                % 使用EWMA平滑机动概率，避免突变
+                trackState = adaptiveNoiseParams.trackStates(iTrack);
+                trackState.maneuverProb = adaptiveNoiseParams.smoothingAlpha * maneuverProbRaw + ...
+                                          (1 - adaptiveNoiseParams.smoothingAlpha) * trackState.maneuverProb;
+                
+                % 机动状态判断逻辑
+                if ~trackState.isManeuver
+                    % 当前非机动状态，检查是否进入机动
+                    if trackState.maneuverProb > adaptiveNoiseParams.maneuverThreshold && ...
+                       trackState.cooldownCounter == 0
+                        % 触发机动状态
+                        trackState.isManeuver = true;
+                        trackState.boostCounter = 0;
+                        fprintf('  [Adaptive] Track %d: 检测到机动 (概率=%.3f), 增大过程噪声\n', ...
+                                trackID, trackState.maneuverProb);
+                    end
+                else
+                    % 当前处于机动状态，检查是否退出机动
+                    trackState.boostCounter = trackState.boostCounter + 1;
+                    
+                    % 只有在持续了最小增强时长且概率回落后才退出
+                    if trackState.boostCounter >= adaptiveNoiseParams.minBoostDuration && ...
+                       trackState.maneuverProb < adaptiveNoiseParams.maneuverThreshold * 0.7  % 退出阈值稍低，形成迟滞
+                        % 退出机动状态
+                        trackState.isManeuver = false;
+                        trackState.cooldownCounter = adaptiveNoiseParams.cooldownFrames;
+                        fprintf('  [Adaptive] Track %d: 机动结束 (概率=%.3f), 恢复过程噪声\n', ...
+                                trackID, trackState.maneuverProb);
+                    end
+                end
+                
+                % 更新冷却计数器
+                if trackState.cooldownCounter > 0
+                    trackState.cooldownCounter = trackState.cooldownCounter - 1;
+                end
+                
+                % 平滑过渡增强系数（避免突变导致的jitter）
+                targetBoostFactor = 1.0;
+                if trackState.isManeuver
+                    targetBoostFactor = adaptiveNoiseParams.boostFactor;
+                end
+                
+                % 使用指数平滑过渡
+                transitionSpeed = 0.4;  % 过渡速度（0-1，越大越快）
+                trackState.currentBoostFactor = transitionSpeed * targetBoostFactor + ...
+                                                (1 - transitionSpeed) * trackState.currentBoostFactor;
+                
+                % 应用自适应过程噪声调整
+                if abs(trackState.currentBoostFactor - 1.0) > 0.01  % 只有在显著偏离1.0时才调整
+                    try
+                        % 获取当前滤波器
+                        filter = getTrackFilterProperties(tracker, trackID, 'Filter');
+                        
+                        % IMM滤波器包含多个子滤波器，我们主要调整CV模型
+                        if isa(filter, 'trackingIMM')
+                            % 获取CV滤波器（第一个子滤波器）
+                            cvFilter = filter.TrackingFilters{1};
+                            
+                            % 获取原始过程噪声
+                            Q_original = cvFilter.ProcessNoise;
+                            
+                            % 应用增强系数
+                            Q_adaptive = Q_original * trackState.currentBoostFactor;
+                            
+                            % 更新过程噪声
+                            cvFilter.ProcessNoise = Q_adaptive;
+                            
+                            % 将修改后的滤波器写回
+                            filter.TrackingFilters{1} = cvFilter;
+                            setTrackFilterProperties(tracker, trackID, 'Filter', filter);
+                            
+                            % 可选：也可以调整CT和CA模型，但通常CV是主要的
+                            % 因为机动时我们希望CV能快速适应，而CT/CA已经是机动模型
+                        end
+                    catch ME
+                        % 如果访问失败，静默跳过（可能航迹刚初始化）
+                        % fprintf('  [Adaptive] Track %d: 无法调整过程噪声 (%s)\n', trackID, ME.message);
+                    end
+                end
+                
+                % 保存更新后的状态
+                adaptiveNoiseParams.trackStates(iTrack) = trackState;
+            end
+        end
+    end
+    
     % Pass detections to the tracker
     tracks = tracker(detections, t(i)); % GNN跟踪器需要时间戳
 
@@ -234,21 +363,31 @@ for i = 1:numSensingFrames
             idx = activeTrackCount;
         end
 
-        % Extract state from IMM filter (handle different state dimensions)
+        % 从IMM滤波器提取状态（取前4维：x, vx, y, vy）
         trackState = tracks(it).State;
         targetStateEstimates(:, i, idx) = NaN;
+        if numel(trackState) >= 4
+            targetStateEstimates(1:4, i, idx) = trackState(1:4);
+        else
+            targetStateEstimates(1:numel(trackState), i, idx) = trackState;
+        end
         
-        % Store available state components (up to 6-D for CA model)
-        numStatesToStore = min(numel(trackState), size(targetStateEstimates, 1));
-        targetStateEstimates(1:numStatesToStore, i, idx) = trackState(1:numStatesToStore);
-        
-        % Save IMM model probabilities
+        % 保存IMM模型概率
         modelProbabilities(:, i, idx) = NaN;
         try
+            % 使用getTrackFilterProperties获取模型概率
             mp = getTrackFilterProperties(tracker, id, 'ModelProbabilities');
-            numModels = min(numel(mp), size(modelProbabilities, 1));
-            modelProbabilities(1:numModels, i, idx) = mp(1:numModels);
+            
+            % 处理返回值：可能是cell数组或数值数组
+            if iscell(mp) && ~isempty(mp)
+                mp = mp{1};  % 提取cell内容
+            end
+            
+            if ~isempty(mp) && isnumeric(mp) && numel(mp) == 3
+                modelProbabilities(:, i, idx) = mp(:);
+            end
         catch
+            % 静默失败，保持NaN
             modelProbabilities(:, i, idx) = NaN;
         end
     end    
@@ -288,7 +427,14 @@ if ~exist(resultsDir, 'dir')
 end
 resultFile = fullfile(resultsDir, 'trackingResults.mat');
 trackIDs = trackIDList(1:activeTrackCount);
-save(resultFile, 'targetStateEstimates', 'modelProbabilities', 't', 'trackIDs');
+
+% 保存自适应过程噪声的状态历史（用于后续分析）
+adaptiveHistory = struct();
+for iTrack = 1:activeTrackCount
+    adaptiveHistory.trackStates{iTrack} = adaptiveNoiseParams.trackStates(iTrack);
+end
+
+save(resultFile, 'targetStateEstimates', 'modelProbabilities', 't', 'trackIDs', 'adaptiveHistory');
 fprintf('\nTracking results saved to %s\n', resultFile);
 
 end
