@@ -107,9 +107,9 @@ activeTrackCount = 0;
 % === 自适应过程噪声参数 ===
 % 为每个航迹维护自适应状态
 adaptiveNoiseParams = struct();
-adaptiveNoiseParams.maneuverThreshold = 0.4;      % 机动检测阈值（CT+CA概率之和）
-adaptiveNoiseParams.boostFactor = 5.0;            % Q矩阵增强系数
-adaptiveNoiseParams.smoothingAlpha = 0.3;         % EWMA平滑系数（0-1，越小越平滑）
+adaptiveNoiseParams.maneuverThreshold = 0.6;      % 机动检测阈值（CT+CA概率之和）- 提高以减少误报
+adaptiveNoiseParams.boostFactor = 2.5;            % Q矩阵增强系数 - 降低以减少抖动
+adaptiveNoiseParams.smoothingAlpha = 0.15;        % EWMA平滑系数（0-1，越小越平滑）- 降低以过滤噪声
 adaptiveNoiseParams.cooldownFrames = 3;           % 冷却帧数，避免频繁切换
 adaptiveNoiseParams.minBoostDuration = 2;         % 最小增强持续帧数
 

@@ -35,7 +35,7 @@ for iTrack = 1:numTracks
     plot(t, modelProb(3, :), 'g-', 'LineWidth', 2, 'DisplayName', 'CA模型');
     
     % 标注机动区域（CT+CA > 阈值）
-    maneuverThreshold = 0.4;
+    maneuverThreshold = 0.6;  % 与实际跟踪参数保持一致
     maneuverRegion = maneuverProb > maneuverThreshold;
     
     % 找到机动区间
