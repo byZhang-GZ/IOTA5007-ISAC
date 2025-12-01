@@ -34,33 +34,33 @@ resultsCV = struct('rmse', [], 'tracks', {}, 'estPos', {});
 resultsIMMStd = struct('rmse', [], 'tracks', {}, 'estPos', {});
 resultsIMMAdaptive = struct('rmse', [], 'tracks', {}, 'estPos', {});
 
-%% ========== 蒙特卡洛仿真循环 ==========
+%% ========== Monte Carlo Simulation Loop ==========
 for mcRun = 1:numMCRuns
-    fprintf('\n========== MC运行 %d/%d ==========\n', mcRun, numMCRuns);
+    fprintf('\n========== MC Run %d/%d ==========\n', mcRun, numMCRuns);
     
-    % ===== 算法1: CV-EKF =====
-    fprintf('[算法1] CV-EKF 运行中...\n');
+    % ===== Algorithm 1: CV-EKF =====
+    fprintf('[Algorithm 1] CV-EKF running...\n');
     [rmseCV, tracksCV, estPosCV] = runCVEKF(targetTrajectories, txPosition, rxPosition, numFrames);
     resultsCV(mcRun).rmse = rmseCV;
     resultsCV(mcRun).tracks = tracksCV;
     resultsCV(mcRun).estPos = estPosCV;
-    fprintf('  → 平均RMSE: %.2f m\n', mean(rmseCV, 'omitnan'));
+    fprintf('  → Average RMSE: %.2f m\n', mean(rmseCV, 'omitnan'));
     
-    % ===== 算法2: 普通IMM-UKF =====
-    fprintf('[算法2] 标准IMM-UKF 运行中...\n');
+    % ===== Algorithm 2: Standard IMM-UKF =====
+    fprintf('[Algorithm 2] Standard IMM-UKF running...\n');
     [rmseIMMStd, tracksIMMStd, estPosIMMStd] = runStandardIMM(targetTrajectories, txPosition, rxPosition, numFrames);
     resultsIMMStd(mcRun).rmse = rmseIMMStd;
     resultsIMMStd(mcRun).tracks = tracksIMMStd;
     resultsIMMStd(mcRun).estPos = estPosIMMStd;
-    fprintf('  → 平均RMSE: %.2f m\n', mean(rmseIMMStd, 'omitnan'));
+    fprintf('  → Average RMSE: %.2f m\n', mean(rmseIMMStd, 'omitnan'));
     
-    % ===== 算法3: 自适应IMM-UKF =====
-    fprintf('[算法3] 自适应IMM-UKF 运行中...\n');
+    % ===== Algorithm 3: Adaptive IMM-UKF =====
+    fprintf('[Algorithm 3] Adaptive IMM-UKF running...\n');
     [rmseIMMAdaptive, tracksIMMAdaptive, estPosIMMAdaptive] = runAdaptiveIMM(targetTrajectories, txPosition, rxPosition, numFrames);
     resultsIMMAdaptive(mcRun).rmse = rmseIMMAdaptive;
     resultsIMMAdaptive(mcRun).tracks = tracksIMMAdaptive;
     resultsIMMAdaptive(mcRun).estPos = estPosIMMAdaptive;
-    fprintf('  → 平均RMSE: %.2f m\n', mean(rmseIMMAdaptive, 'omitnan'));
+    fprintf('  → Average RMSE: %.2f m\n', mean(rmseIMMAdaptive, 'omitnan'));
 end
 
 %% ========== 统计分析 ==========
@@ -101,31 +101,29 @@ avgRMSE_CV = mean(rmseCV_mean, 'omitnan');
 avgRMSE_IMMStd = mean(rmseIMMStd_mean, 'omitnan');
 avgRMSE_IMMAdaptive = mean(rmseIMMAdaptive_mean, 'omitnan');
 
-fprintf('CV-EKF 平均RMSE: %.2f ± %.2f m\n', avgRMSE_CV, mean(rmseCV_std, 'omitnan'));
-fprintf('标准IMM-UKF 平均RMSE: %.2f ± %.2f m\n', avgRMSE_IMMStd, mean(rmseIMMStd_std, 'omitnan'));
-fprintf('自适应IMM-UKF 平均RMSE: %.2f ± %.2f m\n', avgRMSE_IMMAdaptive, mean(rmseIMMAdaptive_std, 'omitnan'));
+fprintf('CV-EKF Average RMSE: %.2f ± %.2f m\n', avgRMSE_CV, mean(rmseCV_std, 'omitnan'));
+fprintf('Standard IMM-UKF Average RMSE: %.2f ± %.2f m\n', avgRMSE_IMMStd, mean(rmseIMMStd_std, 'omitnan'));
+fprintf('Adaptive IMM-UKF Average RMSE: %.2f ± %.2f m\n', avgRMSE_IMMAdaptive, mean(rmseIMMAdaptive_std, 'omitnan'));
 
 % 性能提升百分比
 improvement_vs_CV = (avgRMSE_CV - avgRMSE_IMMAdaptive) / avgRMSE_CV * 100;
 improvement_vs_IMMStd = (avgRMSE_IMMStd - avgRMSE_IMMAdaptive) / avgRMSE_IMMStd * 100;
 
-fprintf('\n相对于CV-EKF改进: %.1f%%\n', improvement_vs_CV);
-fprintf('相对于标准IMM-UKF改进: %.1f%%\n', improvement_vs_IMMStd);
+fprintf('\nImprovement vs CV-EKF: %.1f%%\n', improvement_vs_CV);
+fprintf('Improvement vs Standard IMM-UKF: %.1f%%\n', improvement_vs_IMMStd);
 
-%% ========== 可视化 ==========
-figure('Name', '性能对比: 位置RMSE', 'Position', [100, 100, 1200, 600]);
+%% ========== Visualization ==========
+% Figure 1: RMSE 时间曲线（含误差带）
+figure('Name', 'RMSE Curves Comparison', 'Position', [100, 500, 600, 400]);
+hold on; grid on;
 
 % 时间轴
 timeAxis = (0:maxLength-1) * 0.01;  % 假设采样周期10ms
 
-% 主图: RMSE对比
-subplot(2, 1, 1);
-hold on; grid on;
-
 % 绘制均值曲线
 h1 = plot(timeAxis, rmseCV_mean, 'r-', 'LineWidth', 2, 'DisplayName', 'CV-EKF');
-h2 = plot(timeAxis, rmseIMMStd_mean, 'b-', 'LineWidth', 2, 'DisplayName', '标准IMM-UKF');
-h3 = plot(timeAxis, rmseIMMAdaptive_mean, 'g-', 'LineWidth', 2, 'DisplayName', '自适应IMM-UKF');
+h2 = plot(timeAxis, rmseIMMStd_mean, 'b-', 'LineWidth', 2, 'DisplayName', 'Standard IMM-UKF');
+h3 = plot(timeAxis, rmseIMMAdaptive_mean, 'g-', 'LineWidth', 2, 'DisplayName', 'Adaptive IMM-UKF');
 
 % 绘制标准差阴影区域
 fill([timeAxis, fliplr(timeAxis)], ...
@@ -138,43 +136,54 @@ fill([timeAxis, fliplr(timeAxis)], ...
      [rmseIMMAdaptive_mean + rmseIMMAdaptive_std; flipud(rmseIMMAdaptive_mean - rmseIMMAdaptive_std)], ...
      'g', 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 
-xlabel('时间 (s)', 'FontSize', 12);
-ylabel('位置RMSE (m)', 'FontSize', 12);
-title(sprintf('位置RMSE对比 (MC运行: %d次)', numMCRuns), 'FontSize', 14, 'FontWeight', 'bold');
-legend([h1, h2, h3], 'Location', 'best', 'FontSize', 11);
-set(gca, 'FontSize', 11);
+xlabel('Time (s)', 'FontName', 'Times New Roman', 'FontSize', 12);
+ylabel('Position RMSE (m)', 'FontName', 'Times New Roman', 'FontSize', 12);
+title(sprintf('Position RMSE Comparison (MC Runs: %d)', numMCRuns), ...
+      'FontName', 'Times New Roman', 'FontSize', 12, 'FontWeight', 'bold');
+legend([h1, h2, h3], 'Location', 'best', 'FontName', 'Times New Roman', 'FontSize', 12);
+set(gca, 'FontName', 'Times New Roman', 'FontSize', 12);
+hold off;
 
-% 子图: 性能提升柱状图
-subplot(2, 1, 2);
-categories = {'CV-EKF', '标准IMM-UKF', '自适应IMM-UKF'};
+% Figure 2: 平均 RMSE 柱状图
+figure('Name', 'Average RMSE Comparison', 'Position', [750, 500, 600, 400]);
+hold on; grid on;
+
+categories = {'CV-EKF', 'Std. IMM-UKF', 'Ada. IMM-UKF'};
 avgRMSE_values = [avgRMSE_CV, avgRMSE_IMMStd, avgRMSE_IMMAdaptive];
 colors = [1 0.3 0.3; 0.3 0.3 1; 0.3 0.8 0.3];
 
 bar_handle = bar(avgRMSE_values, 'FaceColor', 'flat');
 bar_handle.CData = colors;
 
-hold on; grid on;
 % 添加数值标签
 for i = 1:3
     text(i, avgRMSE_values(i) + max(avgRMSE_values)*0.02, ...
          sprintf('%.2f m', avgRMSE_values(i)), ...
-         'HorizontalAlignment', 'center', 'FontSize', 11, 'FontWeight', 'bold');
+         'HorizontalAlignment', 'center', 'FontName', 'Times New Roman', ...
+         'FontSize', 12, 'FontWeight', 'bold');
 end
 
-set(gca, 'XTickLabel', categories, 'FontSize', 11);
-ylabel('平均位置RMSE (m)', 'FontSize', 12);
-title('平均性能对比', 'FontSize', 14, 'FontWeight', 'bold');
+% 设置横轴刻度和标签
+set(gca, 'XTick', 1:3, 'XTickLabel', categories, ...
+    'FontName', 'Times New Roman', 'FontSize', 12);
+ylabel('Average Position RMSE (m)', 'FontName', 'Times New Roman', 'FontSize', 12);
+title('Average Performance Comparison', 'FontName', 'Times New Roman', ...
+      'FontSize', 12, 'FontWeight', 'bold');
 ylim([0, max(avgRMSE_values) * 1.15]);
 
 % 添加性能提升标注
 text(1.5, max(avgRMSE_values) * 1.05, ...
      sprintf('↓ %.1f%%', improvement_vs_CV), ...
-     'HorizontalAlignment', 'center', 'FontSize', 10, 'Color', 'r', 'FontWeight', 'bold');
+     'HorizontalAlignment', 'center', 'FontName', 'Times New Roman', ...
+     'FontSize', 11, 'Color', 'r', 'FontWeight', 'bold');
 text(2.5, max(avgRMSE_values) * 1.05, ...
      sprintf('↓ %.1f%%', improvement_vs_IMMStd), ...
-     'HorizontalAlignment', 'center', 'FontSize', 10, 'Color', 'b', 'FontWeight', 'bold');
+     'HorizontalAlignment', 'center', 'FontName', 'Times New Roman', ...
+     'FontSize', 11, 'Color', 'b', 'FontWeight', 'bold');
 
-fprintf('\n========== 性能评测完成 ==========\n');
+hold off;
+
+fprintf('\n========== Performance Evaluation Completed ==========\n');
 
 %% ========== 验证函数: 测试航迹-真值匹配逻辑 ==========
 function testTrackToTruthAssociation()

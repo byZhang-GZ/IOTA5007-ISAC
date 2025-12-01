@@ -8,11 +8,11 @@ addpath('Supporting_Functions');
 
 % 检查必需的变量是否存在
 if ~exist('numRxAntennas', 'var') || ~exist('waveformConfig', 'var')
-    fprintf('检测到缺少配置变量，正在运行配置脚本...\n');
+    fprintf('Missing configuration variables detected, running config scripts...\n');
     run('ISAC_Scenario.m');
-    fprintf('✓ ISAC场景配置完成\n');
+    fprintf('✓ ISAC scenario configured\n');
     run('FiveG_Waveform_Config.m');
-    fprintf('✓ 5G波形配置完成\n\n');
+    fprintf('✓ 5G waveform configured\n\n');
 end
 
 %  总共仿真10个PDSCH帧
@@ -273,7 +273,7 @@ for i = 1:numSensingFrames
                         % 触发机动状态
                         trackState.isManeuver = true;
                         trackState.boostCounter = 0;
-                        fprintf('  [Adaptive] Track %d: 检测到机动 (概率=%.3f), 增大过程噪声\n', ...
+                        fprintf('  [Adaptive] Track %d: Maneuver detected (prob=%.3f), increasing process noise\n', ...
                                 trackID, trackState.maneuverProb);
                     end
                 else
@@ -286,7 +286,7 @@ for i = 1:numSensingFrames
                         % 退出机动状态
                         trackState.isManeuver = false;
                         trackState.cooldownCounter = adaptiveNoiseParams.cooldownFrames;
-                        fprintf('  [Adaptive] Track %d: 机动结束 (概率=%.3f), 恢复过程噪声\n', ...
+                        fprintf('  [Adaptive] Track %d: Maneuver ended (prob=%.3f), restoring process noise\n', ...
                                 trackID, trackState.maneuverProb);
                     end
                 end
@@ -434,7 +434,10 @@ for iTrack = 1:activeTrackCount
     adaptiveHistory.trackStates{iTrack} = adaptiveNoiseParams.trackStates(iTrack);
 end
 
-save(resultFile, 'targetStateEstimates', 'modelProbabilities', 't', 'trackIDs', 'adaptiveHistory');
+% 保存目标真实轨迹供可视化使用
+targetTrajectories = helperGetTargetTrajectories();
+
+save(resultFile, 'targetStateEstimates', 'modelProbabilities', 't', 'trackIDs', 'adaptiveHistory', 'targetTrajectories');
 fprintf('\nTracking results saved to %s\n', resultFile);
 
 end
